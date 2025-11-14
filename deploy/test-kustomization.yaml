@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - csidriver.yaml
+  - rbac.yaml
+  - configmap.yaml
+  - controller.yaml
+  - node.yaml
+  - storageclass.yaml
+
+# Use test images
+images:
+  - name: emma/csi-driver
+    newName: emma/emma-csi-controller
+    newTag: test
+  - name: emma/csi-node
+    newName: emma/emma-csi-node
+    newTag: test
+
+# Create a test secret with dummy credentials
+secretGenerator:
+  - name: emma-api-credentials
+    namespace: kube-system
+    literals:
+      - client-id=test-client-id
+      - client-secret=test-client-secret
