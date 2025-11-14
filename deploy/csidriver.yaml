@@ -1,0 +1,23 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: csi.emma.ms
+spec:
+  # Indicates that the driver requires attachment operations
+  # The controller will handle ControllerPublishVolume/ControllerUnpublishVolume
+  attachRequired: true
+  
+  # Pod info will be passed to NodePublishVolume calls
+  # This allows the driver to access pod metadata if needed
+  podInfoOnMount: true
+  
+  # Volume lifecycle modes supported by this driver
+  volumeLifecycleModes:
+    - Persistent
+  
+  # The driver does not support ephemeral inline volumes
+  # Only persistent volumes via PVCs are supported
+  
+  # FSGroupPolicy controls how the driver handles fsGroup
+  # File mode is used for block storage with filesystem
+  fsGroupPolicy: File

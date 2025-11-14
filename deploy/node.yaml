@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: emma-csi-node
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: emma-csi-node
+  template:
+    metadata:
+      labels:
+        app: emma-csi-node
+    spec:
+      serviceAccountName: emma-csi-node
+      priorityClassName: system-node-critical
+      hostNetwork: true
+      tolerations:
+        - operator: Exists
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        # CSI Node Plugin container
+        - name: emma-csi-node
+          image: emma/csi-driver:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --endpoint=unix:///csi/csi.sock
+            - --v=5
+            - --node-id=$(NODE_NAME)
+          env:
+            # Configuration from ConfigMap
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: emma-csi-driver-config
+                  key: log-level
+            # Node ID will be determined from Emma.ms VM metadata
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN"]
+            allowPrivilegeEscalation: true
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            # CSI socket directory
+            - name: plugin-dir
+              mountPath: /csi
+            # Kubelet pods directory for mounting volumes
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+            # Device directory for discovering attached volumes
+            - name: device-dir
+              mountPath: /dev
+            # Host sys directory for device operations
+            - name: sys-dir
+              mountPath: /sys
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9809
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 10
+            failureThreshold: 5
+        
+        # CSI Node Driver Registrar sidecar
+        - name: node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.8.0
+          args:
+            - --csi-address=$(ADDRESS)
+            - --kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)
+            - --v=5
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/csi.emma.ms/csi.sock
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+        
+        # Liveness probe sidecar
+        - name: liveness-probe
+          image: registry.k8s.io/sig-storage/livenessprobe:v2.10.0
+          args:
+            - --csi-address=$(ADDRESS)
+            - --health-port=9809
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+      
+      volumes:
+        # Plugin directory for CSI socket
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/csi.emma.ms/
+            type: DirectoryOrCreate
+        # Registration directory for kubelet plugin registration
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry/
+            type: Directory
+        # Pods mount directory for volume mounting
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: Directory
+        # Device directory for device discovery
+        - name: device-dir
+          hostPath:
+            path: /dev
+            type: Directory
+        # Sys directory for device operations
+        - name: sys-dir
+          hostPath:
+            path: /sys
+            type: Directory

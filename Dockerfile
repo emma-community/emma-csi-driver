@@ -1,0 +1,74 @@
+# Multi-stage build for Emma CSI Driver
+# This Dockerfile builds both controller and node plugin binaries
+
+# Build stage
+# Using Go 1.24 (or latest available)
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git make
+
+WORKDIR /workspace
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY cmd/ cmd/
+COPY pkg/ pkg/
+
+# Build arguments for versioning
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+# Build binaries with version information
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE} -w -s" \
+    -a -installsuffix cgo \
+    -o /bin/emma-csi-controller \
+    ./cmd/controller
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE} -w -s" \
+    -a -installsuffix cgo \
+    -o /bin/emma-csi-node \
+    ./cmd/node
+
+# Controller image
+FROM alpine:3.19 AS controller
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates
+
+# Copy controller binary
+COPY --from=builder /bin/emma-csi-controller /bin/emma-csi-controller
+
+# Create non-root user
+RUN addgroup -g 1000 csi && \
+    adduser -D -u 1000 -G csi csi
+
+USER csi
+
+ENTRYPOINT ["/bin/emma-csi-controller"]
+
+# Node image
+FROM alpine:3.19 AS node
+
+# Install runtime dependencies for mounting and filesystem operations
+RUN apk add --no-cache \
+    ca-certificates \
+    e2fsprogs \
+    xfsprogs \
+    blkid \
+    util-linux \
+    mount
+
+# Copy node binary
+COPY --from=builder /bin/emma-csi-node /bin/emma-csi-node
+
+# Node plugin needs to run as root for mount operations
+USER root
+
+ENTRYPOINT ["/bin/emma-csi-node"]
