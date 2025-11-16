@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,6 +222,14 @@ func TestAttachVolume(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Handle GetVM call (new in AttachVolume)
+				if r.Method == "GET" && strings.Contains(r.URL.Path, "/vms/") {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(`{"id":456,"status":"ACTIVE"}`))
+					return
+				}
+				// Handle attach action
 				w.WriteHeader(tt.responseStatus)
 			}))
 			defer server.Close()

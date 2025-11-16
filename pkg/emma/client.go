@@ -549,6 +549,11 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 func (c *Client) GetVM(ctx context.Context, vmID int32) (*emma.Vm, error) {
 	klog.V(5).Infof("Getting VM: %d", vmID)
 
+	// Check if apiClient is available (may be nil in tests)
+	if c.apiClient == nil {
+		return nil, fmt.Errorf("API client not initialized")
+	}
+
 	vm, _, err := c.apiClient.VirtualMachinesAPI.GetVm(c.ctx, vmID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VM: %w", err)
