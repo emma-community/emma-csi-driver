@@ -238,7 +238,7 @@ func (c *Client) CreateVolume(ctx context.Context, name string, sizeGB int32, vo
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -263,7 +263,7 @@ func (c *Client) GetVolume(ctx context.Context, volumeID int32) (*VolumeResponse
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("volume %d not found", volumeID)
@@ -290,7 +290,7 @@ func (c *Client) ListVolumes(ctx context.Context) ([]*VolumeResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -315,7 +315,7 @@ func (c *Client) DeleteVolume(ctx context.Context, volumeID int32) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		klog.V(4).Infof("Volume %d not found, considering it already deleted", volumeID)
@@ -345,7 +345,7 @@ func (c *Client) ResizeVolume(ctx context.Context, volumeID int32, newSizeGB int
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
@@ -400,7 +400,7 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 		}
 
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
 			elapsed := time.Since(startTime)
@@ -492,7 +492,7 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 		}
 
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
 			elapsed := time.Since(startTime)
