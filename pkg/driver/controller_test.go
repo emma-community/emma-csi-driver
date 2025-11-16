@@ -11,17 +11,17 @@ import (
 
 // mockEmmaClient is a mock implementation of the Emma API client for testing
 type mockEmmaClient struct {
-	createVolumeFunc           func(ctx context.Context, name string, sizeGB int32, volumeType string, dataCenterID string) (*mockVolume, error)
-	getVolumeFunc              func(ctx context.Context, volumeID int32) (*mockVolume, error)
-	deleteVolumeFunc           func(ctx context.Context, volumeID int32) error
-	attachVolumeFunc           func(ctx context.Context, vmID int32, volumeID int32) error
-	detachVolumeFunc           func(ctx context.Context, vmID int32, volumeID int32) error
-	resizeVolumeFunc           func(ctx context.Context, volumeID int32, newSizeGB int32) error
-	validateDataCenterFunc     func(ctx context.Context, dataCenterID string) error
-	waitForVolumeStatusFunc    func(ctx context.Context, volumeID int32, status string, timeout interface{}) error
+	createVolumeFunc            func(ctx context.Context, name string, sizeGB int32, volumeType string, dataCenterID string) (*mockVolume, error)
+	getVolumeFunc               func(ctx context.Context, volumeID int32) (*mockVolume, error)
+	deleteVolumeFunc            func(ctx context.Context, volumeID int32) error
+	attachVolumeFunc            func(ctx context.Context, vmID int32, volumeID int32) error
+	detachVolumeFunc            func(ctx context.Context, vmID int32, volumeID int32) error
+	resizeVolumeFunc            func(ctx context.Context, volumeID int32, newSizeGB int32) error
+	validateDataCenterFunc      func(ctx context.Context, dataCenterID string) error
+	waitForVolumeStatusFunc     func(ctx context.Context, volumeID int32, status string, timeout interface{}) error
 	waitForVolumeAttachmentFunc func(ctx context.Context, volumeID int32, vmID int32, timeout interface{}) error
 	waitForVolumeDetachmentFunc func(ctx context.Context, volumeID int32, timeout interface{}) error
-	listVolumesFunc            func(ctx context.Context) ([]*mockVolume, error)
+	listVolumesFunc             func(ctx context.Context) ([]*mockVolume, error)
 }
 
 type mockVolume struct {
@@ -202,7 +202,7 @@ func TestValidateVolumeCapabilities(t *testing.T) {
 		name:    "csi.emma.ms",
 		version: "1.0.0",
 	}
-	
+
 	service := NewControllerService(driver, nil)
 
 	tests := []struct {
@@ -295,26 +295,26 @@ func TestControllerGetCapabilities(t *testing.T) {
 		name:    "csi.emma.ms",
 		version: "1.0.0",
 	}
-	
+
 	service := NewControllerService(driver, nil)
-	
+
 	resp, err := service.ControllerGetCapabilities(context.Background(), &csi.ControllerGetCapabilitiesRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	
+
 	if resp == nil {
 		t.Fatal("expected response but got nil")
 	}
-	
+
 	// Verify expected capabilities
 	expectedCaps := map[csi.ControllerServiceCapability_RPC_Type]bool{
-		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME:   true,
+		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME:     true,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME: true,
-		csi.ControllerServiceCapability_RPC_EXPAND_VOLUME:          true,
-		csi.ControllerServiceCapability_RPC_LIST_VOLUMES:           true,
+		csi.ControllerServiceCapability_RPC_EXPAND_VOLUME:            true,
+		csi.ControllerServiceCapability_RPC_LIST_VOLUMES:             true,
 	}
-	
+
 	for _, cap := range resp.Capabilities {
 		rpc := cap.GetRpc()
 		if rpc == nil {
@@ -325,7 +325,7 @@ func TestControllerGetCapabilities(t *testing.T) {
 		}
 		delete(expectedCaps, rpc.Type)
 	}
-	
+
 	if len(expectedCaps) > 0 {
 		t.Errorf("missing expected capabilities: %v", expectedCaps)
 	}
@@ -337,9 +337,9 @@ func TestControllerUnimplementedMethods(t *testing.T) {
 		name:    "csi.emma.ms",
 		version: "1.0.0",
 	}
-	
+
 	service := NewControllerService(driver, nil)
-	
+
 	t.Run("GetCapacity", func(t *testing.T) {
 		_, err := service.GetCapacity(context.Background(), &csi.GetCapacityRequest{})
 		if err == nil {
@@ -349,7 +349,7 @@ func TestControllerUnimplementedMethods(t *testing.T) {
 			t.Errorf("expected Unimplemented error, got %v", status.Code(err))
 		}
 	})
-	
+
 	t.Run("CreateSnapshot", func(t *testing.T) {
 		_, err := service.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{})
 		if err == nil {
@@ -359,7 +359,7 @@ func TestControllerUnimplementedMethods(t *testing.T) {
 			t.Errorf("expected Unimplemented error, got %v", status.Code(err))
 		}
 	})
-	
+
 	t.Run("DeleteSnapshot", func(t *testing.T) {
 		_, err := service.DeleteSnapshot(context.Background(), &csi.DeleteSnapshotRequest{})
 		if err == nil {

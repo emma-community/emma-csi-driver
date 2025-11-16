@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 
-	emma "github.com/emma-community/emma-go-sdk"
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	emma "github.com/emma-community/emma-go-sdk"
 	"k8s.io/klog/v2"
 )
 
 const (
 	// DriverName is the name of the CSI driver
 	DriverName = "csi.emma.ms"
-	
+
 	// DriverVersion is the version of the CSI driver
 	DriverVersion = "v1.0.0"
 )
@@ -33,9 +33,9 @@ type Driver struct {
 	emmaClient EmmaClient
 
 	// CSI services
-	identityService  csi.IdentityServer
+	identityService   csi.IdentityServer
 	controllerService csi.ControllerServer
-	nodeService      csi.NodeServer
+	nodeService       csi.NodeServer
 
 	// Server
 	srv *NonBlockingGRPCServer

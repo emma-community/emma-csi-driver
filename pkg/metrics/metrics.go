@@ -177,27 +177,27 @@ func (t *APIRequestTimer) Observe(statusCode int) {
 // StartMetricsServer starts the Prometheus metrics HTTP server
 func StartMetricsServer(addr string) error {
 	klog.Infof("Starting metrics server on %s", addr)
-	
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	
+
 	// Add health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	
+
 	server := &http.Server{
 		Addr:    addr,
 		Handler: mux,
 	}
-	
+
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			klog.Errorf("Metrics server error: %v", err)
 		}
 	}()
-	
+
 	klog.Info("Metrics server started successfully")
 	return nil
 }

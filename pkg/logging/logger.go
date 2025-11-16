@@ -104,18 +104,18 @@ func (l *Logger) Error(msg string, err error, fields ...map[string]interface{}) 
 	if !l.shouldLog(ErrorLevel) {
 		return
 	}
-	
+
 	mergedFields := make(map[string]interface{})
 	if len(fields) > 0 {
 		for k, v := range fields[0] {
 			mergedFields[k] = v
 		}
 	}
-	
+
 	if err != nil {
 		mergedFields["error"] = err.Error()
 	}
-	
+
 	l.log(ErrorLevel, msg, mergedFields)
 }
 
@@ -137,7 +137,7 @@ func (l *Logger) shouldLog(level LogLevel) bool {
 		WarnLevel:  2,
 		ErrorLevel: 3,
 	}
-	
+
 	return levelOrder[level] >= levelOrder[l.level]
 }
 
@@ -150,10 +150,10 @@ func (l *Logger) log(level LogLevel, msg string, fields ...map[string]interface{
 			Component: l.component,
 			Message:   msg,
 		}
-		
+
 		if len(fields) > 0 {
 			entry.Fields = fields[0]
-			
+
 			// Extract common fields
 			if op, ok := fields[0]["operation"].(string); ok {
 				entry.Operation = op
@@ -171,13 +171,13 @@ func (l *Logger) log(level LogLevel, msg string, fields ...map[string]interface{
 				entry.Error = errStr
 			}
 		}
-		
+
 		jsonBytes, err := json.Marshal(entry)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to marshal log entry: %v\n", err)
 			return
 		}
-		
+
 		fmt.Println(string(jsonBytes))
 	} else {
 		// Use klog for non-JSON mode
@@ -186,7 +186,7 @@ func (l *Logger) log(level LogLevel, msg string, fields ...map[string]interface{
 			fieldsBytes, _ := json.Marshal(fields[0])
 			fieldsStr = " " + string(fieldsBytes)
 		}
-		
+
 		switch level {
 		case DebugLevel:
 			klog.V(4).Infof("[%s] %s%s", l.component, msg, fieldsStr)
