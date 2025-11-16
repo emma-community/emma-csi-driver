@@ -90,6 +90,19 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 	logger := logging.NewLogger("emma-client")
 	logger.Info("Emma API client initialized successfully")
 
+	// Emma tokens have 15 minute lifespan
+	// Use the expiresIn from response, or default to 15 minutes if not provided
+	expiresIn := tokenResp.GetExpiresIn()
+	if expiresIn <= 0 {
+		expiresIn = 900 // 15 minutes default
+		logger.Warn("Token expiresIn not provided or invalid, using default 15 minutes")
+	}
+	tokenExpiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
+	logger.Info("Initial token obtained", map[string]interface{}{
+		"expiresIn": expiresIn,
+		"expiry":    tokenExpiry,
+	})
+
 	return &Client{
 		apiClient:    apiClient,
 		ctx:          ctx,
@@ -97,7 +110,7 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
 		accessToken:  tokenResp.GetAccessToken(),
 		refreshToken: tokenResp.GetRefreshToken(),
-		tokenExpiry:  time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second),
+		tokenExpiry:  tokenExpiry,
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		logger:       logger,
@@ -107,8 +120,9 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 // getAccessToken returns a valid access token, refreshing if necessary
 func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	c.tokenMutex.RLock()
-	// Check if we have a valid token (with 5 minute buffer)
-	if c.accessToken != "" && time.Now().Add(5*time.Minute).Before(c.tokenExpiry) {
+	// Check if we have a valid token (with 2 minute buffer for 15min tokens)
+	// This gives us time to refresh before expiry while not refreshing too often
+	if c.accessToken != "" && time.Now().Add(2*time.Minute).Before(c.tokenExpiry) {
 		token := c.accessToken
 		c.tokenMutex.RUnlock()
 		return token, nil
@@ -120,11 +134,12 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	defer c.tokenMutex.Unlock()
 
 	// Double-check after acquiring write lock
-	if c.accessToken != "" && time.Now().Add(5*time.Minute).Before(c.tokenExpiry) {
+	if c.accessToken != "" && time.Now().Add(2*time.Minute).Before(c.tokenExpiry) {
 		return c.accessToken, nil
 	}
 
-	klog.V(4).Info("Refreshing access token")
+	oldExpiry := c.tokenExpiry
+	klog.V(4).Infof("Access token expired or expiring soon (expiry: %v), refreshing...", oldExpiry)
 
 	// Try refresh token first
 	if c.refreshToken != "" {
@@ -133,9 +148,18 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 		if err == nil {
 			c.accessToken = tokenResp.GetAccessToken()
 			c.refreshToken = tokenResp.GetRefreshToken()
-			c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second)
+
+			// Emma tokens have 15 minute lifespan
+			// Use the expiresIn from response, or default to 15 minutes if not provided
+			expiresIn := tokenResp.GetExpiresIn()
+			if expiresIn <= 0 {
+				expiresIn = 900 // 15 minutes default
+			}
+			c.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
 			c.ctx = context.WithValue(context.Background(), emma.ContextAccessToken, c.accessToken)
-			klog.V(4).Info("Access token refreshed successfully")
+
+			klog.V(4).Infof("Access token refreshed successfully (new expiry: %v)", c.tokenExpiry)
+			c.logger.Info("Access token refreshed successfully")
 			return c.accessToken, nil
 		}
 		klog.V(4).Infof("Failed to refresh token, will re-authenticate: %v", err)
@@ -151,9 +175,17 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 
 	c.accessToken = tokenResp.GetAccessToken()
 	c.refreshToken = tokenResp.GetRefreshToken()
-	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second)
+
+	// Emma tokens have 15 minute lifespan
+	expiresIn := tokenResp.GetExpiresIn()
+	if expiresIn <= 0 {
+		expiresIn = 900 // 15 minutes default
+	}
+	c.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
 	c.ctx = context.WithValue(context.Background(), emma.ContextAccessToken, c.accessToken)
-	klog.V(4).Info("Re-authenticated successfully")
+
+	klog.V(4).Infof("Re-authenticated successfully (new expiry: %v)", c.tokenExpiry)
+	c.logger.Info("Re-authenticated successfully")
 
 	return c.accessToken, nil
 }
