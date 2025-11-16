@@ -42,14 +42,14 @@ type VolumeCreateRequest struct {
 
 // VolumeResponse represents a volume from the API
 type VolumeResponse struct {
-	ID           int32   `json:"id"`
-	Name         string  `json:"name"`
-	SizeGB       int32   `json:"sizeGb"`
-	Type         string  `json:"type"`
-	Status       string  `json:"status"`
-	AttachedToID *int32  `json:"attachedToId,omitempty"`
-	DataCenterID string  `json:"dataCenterId"`
-	CreatedAt    string  `json:"createdAt"`
+	ID           int32  `json:"id"`
+	Name         string `json:"name"`
+	SizeGB       int32  `json:"sizeGb"`
+	Type         string `json:"type"`
+	Status       string `json:"status"`
+	AttachedToID *int32 `json:"attachedToId,omitempty"`
+	DataCenterID string `json:"dataCenterId"`
+	CreatedAt    string `json:"createdAt"`
 }
 
 // VMActionRequest represents a VM action request
@@ -90,6 +90,19 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 	logger := logging.NewLogger("emma-client")
 	logger.Info("Emma API client initialized successfully")
 
+	// Emma tokens have 15 minute lifespan
+	// Use the expiresIn from response, or default to 15 minutes if not provided
+	expiresIn := tokenResp.GetExpiresIn()
+	if expiresIn <= 0 {
+		expiresIn = 900 // 15 minutes default
+		logger.Warn("Token expiresIn not provided or invalid, using default 15 minutes")
+	}
+	tokenExpiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
+	logger.Info("Initial token obtained", map[string]interface{}{
+		"expiresIn": expiresIn,
+		"expiry":    tokenExpiry,
+	})
+
 	return &Client{
 		apiClient:    apiClient,
 		ctx:          ctx,
@@ -97,7 +110,7 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
 		accessToken:  tokenResp.GetAccessToken(),
 		refreshToken: tokenResp.GetRefreshToken(),
-		tokenExpiry:  time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second),
+		tokenExpiry:  tokenExpiry,
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		logger:       logger,
@@ -107,8 +120,9 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 // getAccessToken returns a valid access token, refreshing if necessary
 func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	c.tokenMutex.RLock()
-	// Check if we have a valid token (with 5 minute buffer)
-	if c.accessToken != "" && time.Now().Add(5*time.Minute).Before(c.tokenExpiry) {
+	// Check if we have a valid token (with 2 minute buffer for 15min tokens)
+	// This gives us time to refresh before expiry while not refreshing too often
+	if c.accessToken != "" && time.Now().Add(2*time.Minute).Before(c.tokenExpiry) {
 		token := c.accessToken
 		c.tokenMutex.RUnlock()
 		return token, nil
@@ -120,12 +134,13 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	defer c.tokenMutex.Unlock()
 
 	// Double-check after acquiring write lock
-	if c.accessToken != "" && time.Now().Add(5*time.Minute).Before(c.tokenExpiry) {
+	if c.accessToken != "" && time.Now().Add(2*time.Minute).Before(c.tokenExpiry) {
 		return c.accessToken, nil
 	}
 
-	klog.V(4).Info("Refreshing access token")
-	
+	oldExpiry := c.tokenExpiry
+	klog.V(4).Infof("Access token expired or expiring soon (expiry: %v), refreshing...", oldExpiry)
+
 	// Try refresh token first
 	if c.refreshToken != "" {
 		refresh := emma.NewRefreshToken(c.refreshToken)
@@ -133,14 +148,23 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 		if err == nil {
 			c.accessToken = tokenResp.GetAccessToken()
 			c.refreshToken = tokenResp.GetRefreshToken()
-			c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second)
+
+			// Emma tokens have 15 minute lifespan
+			// Use the expiresIn from response, or default to 15 minutes if not provided
+			expiresIn := tokenResp.GetExpiresIn()
+			if expiresIn <= 0 {
+				expiresIn = 900 // 15 minutes default
+			}
+			c.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
 			c.ctx = context.WithValue(context.Background(), emma.ContextAccessToken, c.accessToken)
-			klog.V(4).Info("Access token refreshed successfully")
+
+			klog.V(4).Infof("Access token refreshed successfully (new expiry: %v)", c.tokenExpiry)
+			c.logger.Info("Access token refreshed successfully")
 			return c.accessToken, nil
 		}
 		klog.V(4).Infof("Failed to refresh token, will re-authenticate: %v", err)
 	}
-	
+
 	// If refresh fails, re-authenticate with credentials
 	klog.V(4).Info("Re-authenticating with credentials")
 	credentials := emma.NewCredentials(c.clientID, c.clientSecret)
@@ -151,9 +175,17 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 
 	c.accessToken = tokenResp.GetAccessToken()
 	c.refreshToken = tokenResp.GetRefreshToken()
-	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second)
+
+	// Emma tokens have 15 minute lifespan
+	expiresIn := tokenResp.GetExpiresIn()
+	if expiresIn <= 0 {
+		expiresIn = 900 // 15 minutes default
+	}
+	c.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
 	c.ctx = context.WithValue(context.Background(), emma.ContextAccessToken, c.accessToken)
-	klog.V(4).Info("Re-authenticated successfully")
+
+	klog.V(4).Infof("Re-authenticated successfully (new expiry: %v)", c.tokenExpiry)
+	c.logger.Info("Re-authenticated successfully")
 
 	return c.accessToken, nil
 }
@@ -161,7 +193,7 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 // doRequest executes an authenticated HTTP request for endpoints not in SDK
 func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
 	timer := metrics.NewAPIRequestTimer(method, path)
-	
+
 	var bodyReader io.Reader
 	if body != nil {
 		bodyBytes, err := json.Marshal(body)
@@ -209,7 +241,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		"path":   path,
 		"status": resp.StatusCode,
 	})
-	
+
 	// If we get 401 Unauthorized, the token might have expired
 	// Return the response so caller can handle it
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -224,7 +256,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 
 // CreateVolume creates a new volume using direct API call
 func (c *Client) CreateVolume(ctx context.Context, name string, sizeGB int32, volumeType string, dataCenterID string) (*VolumeResponse, error) {
-	klog.V(4).Infof("Creating volume: %s, size: %dGB, type: %s, datacenter: %s", 
+	klog.V(4).Infof("Creating volume: %s, size: %dGB, type: %s, datacenter: %s",
 		name, sizeGB, volumeType, dataCenterID)
 
 	req := &VolumeCreateRequest{
@@ -238,7 +270,7 @@ func (c *Client) CreateVolume(ctx context.Context, name string, sizeGB int32, vo
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -263,7 +295,7 @@ func (c *Client) GetVolume(ctx context.Context, volumeID int32) (*VolumeResponse
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("volume %d not found", volumeID)
@@ -290,7 +322,7 @@ func (c *Client) ListVolumes(ctx context.Context) ([]*VolumeResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -315,7 +347,7 @@ func (c *Client) DeleteVolume(ctx context.Context, volumeID int32) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		klog.V(4).Infof("Volume %d not found, considering it already deleted", volumeID)
@@ -345,7 +377,7 @@ func (c *Client) ResizeVolume(ctx context.Context, volumeID int32, newSizeGB int
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
@@ -360,6 +392,18 @@ func (c *Client) ResizeVolume(ctx context.Context, volumeID int32, newSizeGB int
 func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) error {
 	klog.V(4).Infof("Attaching volume %d to VM %d", volumeID, vmID)
 
+	// Check VM state before attempting attach
+	vm, err := c.GetVM(ctx, vmID)
+	if err != nil {
+		klog.V(4).Infof("Could not get VM state (will try attach anyway): %v", err)
+	} else if vm.Status != nil {
+		klog.V(4).Infof("VM %d current state: %s", vmID, *vm.Status)
+		// Log warning if VM is in a known problematic state
+		if *vm.Status != "ACTIVE" && *vm.Status != "RUNNING" {
+			klog.Warningf("VM %d is in state '%s', attach may fail or take longer", vmID, *vm.Status)
+		}
+	}
+
 	path := fmt.Sprintf("/v1/vms/%d/actions", vmID)
 	req := &VMActionRequest{
 		Action:   "attach",
@@ -368,11 +412,11 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 
 	// Optimized retry logic for VM state conflicts
 	// Emma VMs can be in transitional states during startup/operations
-	// Use shorter initial delays with faster ramp-up
-	maxRetries := 12
+	// Azure VMs may take longer to reach ready state
+	maxRetries := 20 // Increased from 12 for Azure
 	initialDelay := 1 * time.Second
-	maxDelay := 15 * time.Second
-	
+	maxDelay := 20 * time.Second // Increased from 15s
+
 	startTime := time.Now()
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -388,11 +432,11 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 		}
 
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
 			elapsed := time.Since(startTime)
-			klog.V(4).Infof("Volume %d attach to VM %d initiated successfully (took %v, %d attempts)", 
+			klog.V(4).Infof("Volume %d attach to VM %d initiated successfully (took %v, %d attempts)",
 				volumeID, vmID, elapsed, attempt+1)
 			return nil
 		}
@@ -400,8 +444,16 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 		// Handle 409 CONFLICT - VM in transitional state
 		if resp.StatusCode == http.StatusConflict {
 			if attempt < maxRetries {
+				// Check VM state every 5 attempts to provide better diagnostics
+				if attempt > 0 && attempt%5 == 0 {
+					if vm, err := c.GetVM(ctx, vmID); err == nil && vm.Status != nil {
+						klog.Warningf("VM %d still in state '%s' after %d attempts (elapsed: %v)",
+							vmID, *vm.Status, attempt+1, time.Since(startTime))
+					}
+				}
+
 				// Optimized backoff: start fast, ramp up gradually
-				// 1s, 2s, 3s, 5s, 8s, 12s, 15s, 15s...
+				// 1s, 2s, 3s, 5s, 8s, 12s, 20s, 20s...
 				var delay time.Duration
 				if attempt < 3 {
 					delay = initialDelay * time.Duration(attempt+1)
@@ -412,7 +464,7 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 					delay = maxDelay
 				}
 
-				klog.V(4).Infof("VM %d not ready for attach (attempt %d/%d), retrying in %v: %s", 
+				klog.V(4).Infof("VM %d not ready for attach (attempt %d/%d), retrying in %v: %s",
 					vmID, attempt+1, maxRetries+1, delay, string(body))
 
 				select {
@@ -423,7 +475,7 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 				}
 			}
 		}
-		
+
 		// Handle 400 BAD_REQUEST - might be a transient issue
 		if resp.StatusCode == http.StatusBadRequest && attempt < 3 {
 			klog.V(4).Infof("Bad request on attempt %d, retrying after 2s: %s", attempt+1, string(body))
@@ -456,7 +508,7 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 	maxRetries := 12
 	initialDelay := 1 * time.Second
 	maxDelay := 15 * time.Second
-	
+
 	startTime := time.Now()
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -472,11 +524,11 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 		}
 
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
 			elapsed := time.Since(startTime)
-			klog.V(4).Infof("Volume %d detach from VM %d initiated successfully (took %v, %d attempts)", 
+			klog.V(4).Infof("Volume %d detach from VM %d initiated successfully (took %v, %d attempts)",
 				volumeID, vmID, elapsed, attempt+1)
 			return nil
 		}
@@ -495,7 +547,7 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 					delay = maxDelay
 				}
 
-				klog.V(4).Infof("VM %d not ready for detach (attempt %d/%d), retrying in %v: %s", 
+				klog.V(4).Infof("VM %d not ready for detach (attempt %d/%d), retrying in %v: %s",
 					vmID, attempt+1, maxRetries+1, delay, string(body))
 
 				select {
@@ -506,7 +558,7 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 				}
 			}
 		}
-		
+
 		// Handle 400 BAD_REQUEST - might be a transient issue
 		if resp.StatusCode == http.StatusBadRequest && attempt < 3 {
 			klog.V(4).Infof("Bad request on attempt %d, retrying after 2s: %s", attempt+1, string(body))
@@ -528,6 +580,11 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 // GetVM retrieves a VM by ID
 func (c *Client) GetVM(ctx context.Context, vmID int32) (*emma.Vm, error) {
 	klog.V(5).Infof("Getting VM: %d", vmID)
+
+	// Check if apiClient is available (may be nil in tests)
+	if c.apiClient == nil {
+		return nil, fmt.Errorf("API client not initialized")
+	}
 
 	vm, _, err := c.apiClient.VirtualMachinesAPI.GetVm(c.ctx, vmID).Execute()
 	if err != nil {

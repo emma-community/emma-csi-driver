@@ -29,7 +29,7 @@ func main() {
 	// Configure logging
 	logging.SetGlobalLogLevel(*logLevel)
 	logging.SetJSONMode(*jsonLogs)
-	
+
 	logger := logging.NewLogger("node")
 
 	if *nodeID == "" {
@@ -69,11 +69,11 @@ func main() {
 	drv.SetNodeService(nodeService)
 
 	logger.Info("Node service started successfully")
-	
+
 	// Handle shutdown gracefully
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	
+
 	go func() {
 		<-sigChan
 		logger.Info("Received shutdown signal, stopping driver")

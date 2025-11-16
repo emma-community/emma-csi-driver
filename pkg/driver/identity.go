@@ -78,6 +78,6 @@ func (s *IdentityService) Probe(ctx context.Context, req *csi.ProbeRequest) (*cs
 		}
 		klog.V(4).Info("Emma API health check passed")
 	}
-	
+
 	return &csi.ProbeResponse{}, nil
 }

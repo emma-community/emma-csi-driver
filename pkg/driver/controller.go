@@ -56,7 +56,7 @@ func NewControllerService(driver *Driver, emmaClient *emma.Client) *ControllerSe
 func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	timer := metrics.NewOperationTimer("CreateVolume")
 	opLog := s.logger.WithOperation("CreateVolume").WithField("volumeName", req.GetName())
-	
+
 	opLog.Info("CreateVolume request received")
 	klog.V(4).Infof("CreateVolume called with request: %+v", req)
 
@@ -100,7 +100,7 @@ func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 	// Emma requires disk sizes to be powers of 2 (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048)
 	// Round up to the nearest power of 2
 	sizeGB := roundUpToPowerOfTwo(requestedGB)
-	
+
 	if sizeGB != requestedGB {
 		opLog.WithField("requestedGB", requestedGB).WithField("actualGB", sizeGB).Info("Rounded volume size to nearest power of 2")
 		klog.Infof("Volume size rounded: %dGB → %dGB (Emma requires powers of 2)", requestedGB, sizeGB)
@@ -190,7 +190,7 @@ func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 func (s *ControllerService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
 	timer := metrics.NewOperationTimer("DeleteVolume")
 	opLog := s.logger.WithOperation("DeleteVolume").WithVolumeID(req.GetVolumeId())
-	
+
 	opLog.Info("DeleteVolume request received")
 	klog.V(4).Infof("DeleteVolume called with request: %+v", req)
 
@@ -228,7 +228,7 @@ func (s *ControllerService) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 	// Ensure volume is detached
 	if volume.AttachedToID != nil {
 		opLog.WithField("vmId", *volume.AttachedToID).Info("Volume is attached, detaching first")
-		
+
 		// Detach volume
 		if err := s.emmaClient.DetachVolume(ctx, *volume.AttachedToID, int32(volumeID)); err != nil {
 			timer.ObserveError()
@@ -264,7 +264,7 @@ func (s *ControllerService) ControllerPublishVolume(ctx context.Context, req *cs
 	opLog := s.logger.WithOperation("ControllerPublishVolume").
 		WithVolumeID(req.GetVolumeId()).
 		WithNodeID(req.GetNodeId())
-	
+
 	opLog.Info("ControllerPublishVolume request received")
 	klog.V(4).Infof("ControllerPublishVolume called with request: %+v", req)
 
@@ -371,7 +371,7 @@ func (s *ControllerService) ControllerUnpublishVolume(ctx context.Context, req *
 	opLog := s.logger.WithOperation("ControllerUnpublishVolume").
 		WithVolumeID(req.GetVolumeId()).
 		WithNodeID(req.GetNodeId())
-	
+
 	opLog.Info("ControllerUnpublishVolume request received")
 	klog.V(4).Infof("ControllerUnpublishVolume called with request: %+v", req)
 
@@ -546,7 +546,7 @@ func (s *ControllerService) ListVolumes(ctx context.Context, req *csi.ListVolume
 // GetCapacity returns available capacity
 func (s *ControllerService) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*csi.GetCapacityResponse, error) {
 	klog.V(4).Infof("GetCapacity called with request: %+v", req)
-	
+
 	// Not supported
 	return nil, status.Error(codes.Unimplemented, "GetCapacity not supported")
 }
@@ -592,7 +592,7 @@ func (s *ControllerService) ControllerGetCapabilities(ctx context.Context, req *
 // CreateSnapshot creates a snapshot
 func (s *ControllerService) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
 	klog.V(4).Infof("CreateSnapshot called with request: %+v", req)
-	
+
 	// Not supported
 	return nil, status.Error(codes.Unimplemented, "CreateSnapshot not supported")
 }
@@ -600,7 +600,7 @@ func (s *ControllerService) CreateSnapshot(ctx context.Context, req *csi.CreateS
 // DeleteSnapshot deletes a snapshot
 func (s *ControllerService) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
 	klog.V(4).Infof("DeleteSnapshot called with request: %+v", req)
-	
+
 	// Not supported
 	return nil, status.Error(codes.Unimplemented, "DeleteSnapshot not supported")
 }
@@ -608,7 +608,7 @@ func (s *ControllerService) DeleteSnapshot(ctx context.Context, req *csi.DeleteS
 // ListSnapshots lists snapshots
 func (s *ControllerService) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
 	klog.V(4).Infof("ListSnapshots called with request: %+v", req)
-	
+
 	// Not supported
 	return nil, status.Error(codes.Unimplemented, "ListSnapshots not supported")
 }
@@ -686,7 +686,7 @@ func (s *ControllerService) ControllerExpandVolume(ctx context.Context, req *csi
 // ControllerGetVolume gets volume information
 func (s *ControllerService) ControllerGetVolume(ctx context.Context, req *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
 	klog.V(4).Infof("ControllerGetVolume called with request: %+v", req)
-	
+
 	// Not supported
 	return nil, status.Error(codes.Unimplemented, "ControllerGetVolume not supported")
 }
@@ -694,7 +694,7 @@ func (s *ControllerService) ControllerGetVolume(ctx context.Context, req *csi.Co
 // ControllerModifyVolume modifies a volume (not supported)
 func (s *ControllerService) ControllerModifyVolume(ctx context.Context, req *csi.ControllerModifyVolumeRequest) (*csi.ControllerModifyVolumeResponse, error) {
 	klog.V(4).Infof("ControllerModifyVolume called with request: %+v", req)
-	
+
 	// Not supported
 	return nil, status.Error(codes.Unimplemented, "ControllerModifyVolume not supported")
 }
@@ -745,23 +745,23 @@ func roundUpToPowerOfTwo(size int32) int32 {
 	if size <= 0 {
 		return 1
 	}
-	
+
 	// If already a power of 2, return as is
 	if size&(size-1) == 0 {
 		return size
 	}
-	
+
 	// Find the next power of 2
 	power := int32(1)
 	for power < size {
 		power *= 2
 	}
-	
+
 	// Cap at 2048 GB (Emma's maximum)
 	if power > 2048 {
 		return 2048
 	}
-	
+
 	return power
 }
 
@@ -771,36 +771,36 @@ func (s *ControllerService) resolveNodeIDToVMID(ctx context.Context, nodeID stri
 	if vmID, err := strconv.ParseInt(nodeID, 10, 32); err == nil {
 		return int32(vmID), nil
 	}
-	
+
 	// If not an integer, treat as node name and look it up in Kubernetes clusters
 	klog.V(4).Infof("Node ID '%s' is not a number, looking up node in Kubernetes clusters", nodeID)
-	
+
 	// Get all Kubernetes clusters
 	clusters, err := s.emmaClient.ListKubernetesClusters(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to list Kubernetes clusters: %w", err)
 	}
-	
+
 	// Search through all clusters for a node with matching name
 	for _, cluster := range clusters {
-		klog.V(5).Infof("Searching cluster '%s' (ID: %d) for node '%s'", 
+		klog.V(5).Infof("Searching cluster '%s' (ID: %d) for node '%s'",
 			cluster.GetName(), cluster.GetId(), nodeID)
-		
+
 		// Check all node groups in the cluster
 		for _, nodeGroup := range cluster.GetNodeGroups() {
 			klog.V(5).Infof("Checking node group '%s'", nodeGroup.GetName())
-			
+
 			// Check all nodes in the node group
 			for _, node := range nodeGroup.GetNodes() {
 				if node.GetName() == nodeID {
 					vmID := node.GetId()
-					klog.V(4).Infof("Found node '%s' with VM ID %d in cluster '%s'", 
+					klog.V(4).Infof("Found node '%s' with VM ID %d in cluster '%s'",
 						nodeID, vmID, cluster.GetName())
 					return vmID, nil
 				}
 			}
 		}
 	}
-	
+
 	return 0, fmt.Errorf("node not found with name: %s", nodeID)
 }

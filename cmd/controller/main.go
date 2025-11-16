@@ -16,15 +16,15 @@ import (
 )
 
 var (
-	endpoint       = flag.String("endpoint", "unix:///var/lib/csi/sockets/pluginproxy/csi.sock", "CSI endpoint")
-	emmaAPIURL     = flag.String("emma-api-url", "https://api.emma.ms/external", "Emma API base URL")
-	clientID       = flag.String("client-id", "", "Emma API client ID")
-	clientSecret   = flag.String("client-secret", "", "Emma API client secret")
-	dataCenterID   = flag.String("datacenter-id", "", "Default datacenter ID")
-	logLevel       = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
-	jsonLogs       = flag.Bool("json-logs", false, "Enable JSON log formatting")
-	metricsAddr    = flag.String("metrics-addr", ":8080", "Metrics server address")
-	version        = "dev"
+	endpoint     = flag.String("endpoint", "unix:///var/lib/csi/sockets/pluginproxy/csi.sock", "CSI endpoint")
+	emmaAPIURL   = flag.String("emma-api-url", "https://api.emma.ms/external", "Emma API base URL")
+	clientID     = flag.String("client-id", "", "Emma API client ID")
+	clientSecret = flag.String("client-secret", "", "Emma API client secret")
+	dataCenterID = flag.String("datacenter-id", "", "Default datacenter ID")
+	logLevel     = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	jsonLogs     = flag.Bool("json-logs", false, "Enable JSON log formatting")
+	metricsAddr  = flag.String("metrics-addr", ":8080", "Metrics server address")
+	version      = "dev"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 	// Configure logging
 	logging.SetGlobalLogLevel(*logLevel)
 	logging.SetJSONMode(*jsonLogs)
-	
+
 	logger := logging.NewLogger("controller")
 
 	if *clientID == "" {
@@ -126,11 +126,11 @@ func main() {
 	drv.SetControllerService(controllerService)
 
 	logger.Info("Starting controller service")
-	
+
 	// Handle shutdown gracefully
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	
+
 	go func() {
 		<-sigChan
 		logger.Info("Received shutdown signal, stopping driver")
