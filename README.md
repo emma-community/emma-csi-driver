@@ -1,10 +1,10 @@
-# Emma CSI Driver
+# emma CSI Driver
 
-A Container Storage Interface (CSI) driver for Kubernetes that enables dynamic provisioning and management of persistent volumes using the Emma.ms cloud platform.
+A Container Storage Interface (CSI) driver for Kubernetes that enables dynamic provisioning and management of persistent volumes using the emma.ms cloud platform.
 
 ## Overview
 
-The Emma CSI Driver provides similar functionality to the AWS EBS CSI driver but integrates with Emma.ms infrastructure. It allows Kubernetes clusters to dynamically provision, attach, detach, and manage block storage volumes through the Emma.ms API.
+The emma CSI Driver provides similar functionality to the AWS EBS CSI driver but integrates with emma.ms infrastructure. It allows Kubernetes clusters to dynamically provision, attach, detach, and manage block storage volumes through the emma.ms API.
 
 ## Features
 
@@ -33,7 +33,7 @@ The Emma CSI Driver provides similar functionality to the AWS EBS CSI driver but
 ## Requirements
 
 - Kubernetes 1.20+
-- Emma.ms account with API access
+- emma.ms account with API access
 - Go 1.21+ (for building from source)
 
 ## Installation
