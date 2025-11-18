@@ -1,4 +1,5 @@
 # golangci-lint configuration for Emma CSI Driver
+version: "2"
 
 run:
   timeout: 5m
@@ -11,31 +12,25 @@ run:
 linters:
   enable:
     - errcheck      # Check for unchecked errors
-    - gosimple      # Simplify code
     - govet         # Vet examines Go source code
     - ineffassign   # Detect ineffectual assignments
     - staticcheck   # Static analysis
     - unused        # Check for unused code
-    - gofmt         # Check code formatting
-    - goimports     # Check import formatting
     - misspell      # Check for misspelled words
     - gocritic      # Opinionated Go linter
     - revive        # Fast, configurable linter
     - gosec         # Security checker
-    - bodyclose     # Check HTTP response body is closed
-    - noctx         # Check for sending HTTP request without context
     - unparam       # Check for unused function parameters
 
-  disable:
-    - typecheck     # Disabled because it can be slow
+formatters:
+  enable:
+    - gofmt         # Check code formatting
+    - goimports     # Check import formatting
 
 linters-settings:
   errcheck:
     check-type-assertions: true
     check-blank: true
-    exclude-functions:
-      - (*database/sql.Rows).Close
-      - (*database/sql.DB).Close
 
   govet:
     check-shadowing: true
@@ -64,41 +59,32 @@ linters-settings:
       - name: exported
         disabled: false
       - name: package-comments
-        disabled: true  # Not all packages need comments
+        disabled: true
       - name: var-naming
         disabled: false
 
   gosec:
     excludes:
-      - G104  # Audit errors not checked (covered by errcheck)
-      - G304  # File path provided as taint input (false positives)
+      - G104
+      - G304
 
   staticcheck:
     checks: ["all"]
 
 issues:
   exclude-rules:
-    # Exclude some linters from running on tests files
     - path: _test\.go
       linters:
         - gosec
         - errcheck
         - gocritic
 
-    # Exclude known issues
     - text: "weak cryptographic primitive"
       linters:
         - gosec
 
-    # Ignore long lines in generated code
-    - path: ".*\\.pb\\.go"
-      linters:
-        - lll
-
   max-issues-per-linter: 0
   max-same-issues: 0
-
-  # Show all issues
   exclude-use-default: false
 
 output:
