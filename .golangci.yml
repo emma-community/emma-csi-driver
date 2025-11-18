@@ -1,5 +1,4 @@
 # golangci-lint configuration for Emma CSI Driver
-version: "2"
 
 run:
   timeout: 5m
@@ -11,21 +10,16 @@ run:
 
 linters:
   enable:
-    - errcheck      # Check for unchecked errors
-    - govet         # Vet examines Go source code
-    - ineffassign   # Detect ineffectual assignments
-    - staticcheck   # Static analysis
-    - unused        # Check for unused code
-    - misspell      # Check for misspelled words
-    - gocritic      # Opinionated Go linter
-    - revive        # Fast, configurable linter
-    - gosec         # Security checker
-    - unparam       # Check for unused function parameters
-
-formatters:
-  enable:
-    - gofmt         # Check code formatting
-    - goimports     # Check import formatting
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - gocritic
+    - revive
+    - gosec
+    - unparam
 
 linters-settings:
   errcheck:
@@ -35,12 +29,6 @@ linters-settings:
   govet:
     check-shadowing: true
     enable-all: true
-
-  gofmt:
-    simplify: true
-
-  goimports:
-    local-prefixes: github.com/emma-csi-driver
 
   misspell:
     locale: US
