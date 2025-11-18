@@ -1,0 +1,82 @@
+Emma CSI Driver has been installed!
+
+Chart Version: {{ .Chart.Version }}
+App Version: {{ .Chart.AppVersion }}
+Release Name: {{ .Release.Name }}
+Namespace: {{ include "emma-csi-driver.namespace" . }}
+
+{{- if .Values.storageClasses.create }}
+
+Storage Classes Created:
+{{- range .Values.storageClasses.classes }}
+  - {{ .name }}{{ if and (eq .name $.Values.storageClasses.default) .default }} (default){{ end }}
+{{- end }}
+{{- end }}
+
+To verify the installation:
+
+  # Check controller pod
+  kubectl get pods -n {{ include "emma-csi-driver.namespace" . }} -l app=emma-csi-controller
+
+  # Check node pods (one per worker node)
+  kubectl get pods -n {{ include "emma-csi-driver.namespace" . }} -l app=emma-csi-node
+
+  # Check CSI driver registration
+  kubectl get csidrivers {{ .Values.csiDriver.name }}
+
+  # List storage classes
+  kubectl get storageclass
+
+To create a test PVC:
+
+  cat <<EOF | kubectl apply -f -
+  apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: test-pvc
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    storageClassName: {{ .Values.storageClasses.default }}
+    resources:
+      requests:
+        storage: 10Gi
+  EOF
+
+To create a test pod:
+
+  cat <<EOF | kubectl apply -f -
+  apiVersion: v1
+  kind: Pod
+  metadata:
+    name: test-pod
+  spec:
+    containers:
+    - name: app
+      image: nginx
+      volumeMounts:
+      - name: data
+        mountPath: /data
+    volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: test-pvc
+  EOF
+
+To view logs:
+
+  # Controller logs
+  kubectl logs -n {{ include "emma-csi-driver.namespace" . }} -l app=emma-csi-controller -c emma-csi-controller
+
+  # Node logs
+  kubectl logs -n {{ include "emma-csi-driver.namespace" . }} -l app=emma-csi-node -c emma-csi-node
+
+{{- if .Values.controller.metrics.enabled }}
+
+Metrics are available at:
+  kubectl port-forward -n {{ include "emma-csi-driver.namespace" . }} svc/{{ include "emma-csi-driver.fullname" . }}-controller-metrics {{ .Values.controller.metrics.port }}:{{ .Values.controller.metrics.port }}
+  curl http://localhost:{{ .Values.controller.metrics.port }}/metrics
+{{- end }}
+
+For more information, visit:
+  https://github.com/your-org/emma-csi-driver

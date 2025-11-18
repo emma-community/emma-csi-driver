@@ -219,26 +219,71 @@ func (m *LinuxMounter) GetDevicePath(volumeID string) (string, error) {
 		"/dev/disk/by-id/ata-QEMU_HARDDISK_" + volumeID,
 	}
 
-	// Wait for device to appear (up to 180 seconds with exponential backoff)
-	// This needs to be longer than the controller's attach retry timeout
-	// to account for VM state conflicts and API delays
-	maxWait := 180 * time.Second
+	// Wait for device to appear (up to 90 seconds with exponential backoff)
+	// Reduced from 180s to stay well within Kubernetes' 120s mount timeout
+	// We'll try multiple strategies in parallel rather than waiting longer
+	maxWait := 90 * time.Second
 	deadline := time.Now().Add(maxWait)
-	checkInterval := 500 * time.Millisecond
+	checkInterval := 200 * time.Millisecond
+	lastUdevTrigger := time.Time{}
 
-	klog.V(4).Infof("Waiting for device to appear at %s (timeout: %v)", primaryPath, maxWait)
+	klog.V(4).Infof("Waiting for device to appear for volume %s (timeout: %v)", volumeID, maxWait)
 
+	// IMPORTANT: On Emma.ms with AWS, the volume ID (e.g., 93801) does NOT appear in the device name
+	// AWS uses its own volume IDs (e.g., vol0d3199dae8c585cb0) which are different from Emma's IDs
+	// Therefore, we need to use the "newest device" strategy immediately
+
+	// Give the device a moment to appear after attachment (2 seconds)
+	klog.V(4).Infof("Waiting 2 seconds for device to appear after attachment")
+	time.Sleep(2 * time.Second)
+
+	// Trigger udev immediately to ensure device symlinks are created
+	klog.V(4).Infof("Triggering initial udev rescan")
+	_ = exec.Command("udevadm", "trigger", "--subsystem-match=block").Run()
+	_ = exec.Command("udevadm", "settle", "--timeout=5").Run()
+	lastUdevTrigger = time.Now()
+
+	// Try to find device by newest attachment first (works for all cloud providers)
+	// This is the most reliable method when volume IDs don't match device names
+	klog.V(4).Infof("Attempting to find device by newest attachment (Emma volume ID may not match cloud provider device name)")
+
+	// Try NVMe first (AWS)
+	if device, err := m.findNVMeDevice(volumeID); err == nil {
+		klog.Infof("Found NVMe device %s for volume %s via newest device scan", device, volumeID)
+		return device, nil
+	}
+
+	// Try cloud provider devices (GCP, Azure)
+	if device, err := m.findCloudProviderDevice(volumeID); err == nil {
+		klog.Infof("Found cloud provider device %s for volume %s via newest device scan", device, volumeID)
+		return device, nil
+	}
+
+	// If newest device strategy didn't work, fall back to polling for expected paths
+	klog.V(4).Infof("Newest device scan didn't find device, falling back to polling for expected paths")
+
+	iteration := 0
 	for time.Now().Before(deadline) {
+		iteration++
+
+		// Trigger udev early and periodically (every 10 seconds)
+		if time.Since(lastUdevTrigger) > 10*time.Second {
+			klog.V(5).Infof("Triggering udev rescan (iteration %d)", iteration)
+			_ = exec.Command("udevadm", "trigger", "--subsystem-match=block").Run()
+			_ = exec.Command("udevadm", "settle", "--timeout=5").Run()
+			lastUdevTrigger = time.Now()
+		}
+
 		// First, try the primary path
 		if _, err := os.Stat(primaryPath); err == nil {
 			if m.isBlockDevice(primaryPath) {
 				// Resolve symlink to get actual device
 				realPath, err := filepath.EvalSymlinks(primaryPath)
 				if err == nil {
-					klog.V(4).Infof("Found device %s -> %s for volume %s", primaryPath, realPath, volumeID)
+					klog.Infof("Found device %s -> %s for volume %s after %d iterations", primaryPath, realPath, volumeID, iteration)
 					return realPath, nil
 				}
-				klog.V(4).Infof("Found device %s for volume %s", primaryPath, volumeID)
+				klog.Infof("Found device %s for volume %s after %d iterations", primaryPath, volumeID, iteration)
 				return primaryPath, nil
 			}
 		}
@@ -249,53 +294,78 @@ func (m *LinuxMounter) GetDevicePath(volumeID string) (string, error) {
 				if m.isBlockDevice(altPath) {
 					realPath, err := filepath.EvalSymlinks(altPath)
 					if err == nil {
-						klog.V(4).Infof("Found device %s -> %s for volume %s", altPath, realPath, volumeID)
+						klog.Infof("Found device %s -> %s for volume %s after %d iterations", altPath, realPath, volumeID, iteration)
 						return realPath, nil
 					}
-					klog.V(4).Infof("Found device %s for volume %s", altPath, volumeID)
+					klog.Infof("Found device %s for volume %s after %d iterations", altPath, volumeID, iteration)
 					return altPath, nil
 				}
 			}
 		}
 
-		// Trigger udev to rescan devices
-		if time.Now().Add(checkInterval).After(deadline) {
-			// Last attempt - trigger udev rescan
-			klog.V(5).Info("Triggering udev rescan")
-			_ = exec.Command("udevadm", "trigger").Run()
-			_ = exec.Command("udevadm", "settle").Run()
+		// Every 5 seconds, try the newest device strategy again
+		if iteration%25 == 0 { // Every ~5 seconds
+			klog.V(4).Infof("Retrying newest device scan (iteration %d)", iteration)
+
+			// Try NVMe first (common on AWS)
+			if device, err := m.findNVMeDevice(volumeID); err == nil {
+				klog.Infof("Found NVMe device %s for volume %s via periodic scan", device, volumeID)
+				return device, nil
+			}
+
+			// Try cloud provider devices (GCP, Azure)
+			if device, err := m.findCloudProviderDevice(volumeID); err == nil {
+				klog.Infof("Found cloud provider device %s for volume %s via periodic scan", device, volumeID)
+				return device, nil
+			}
+
+			// Try serial scan (virtio)
+			if device, err := m.findDeviceBySerial(volumeID); err == nil {
+				klog.Infof("Found device %s by serial scan for volume %s", device, volumeID)
+				return device, nil
+			}
 		}
 
 		time.Sleep(checkInterval)
 
-		// Increase check interval gradually (exponential backoff)
-		if checkInterval < 5*time.Second {
-			checkInterval = checkInterval * 2
+		// Increase check interval gradually but cap at 1 second
+		if checkInterval < 1*time.Second {
+			checkInterval = checkInterval * 3 / 2 // 1.5x multiplier
 		}
 	}
 
 	// Last resort: scan all block devices and try to match by serial or cloud provider patterns
-	klog.V(4).Infof("Device not found at expected paths, scanning all block devices")
+	klog.Warningf("Device not found at expected paths after %v, performing final scan for volume %s", maxWait, volumeID)
+
+	// List what devices we can see for debugging
+	klog.V(4).Info("Available devices in /dev/disk/by-id/:")
+	if entries, err := os.ReadDir("/dev/disk/by-id/"); err == nil {
+		for i, entry := range entries {
+			if i < 20 { // Limit output
+				klog.V(4).Infof("  - %s", entry.Name())
+			}
+		}
+	}
 
 	// Try to find by serial (virtio devices)
 	if device, err := m.findDeviceBySerial(volumeID); err == nil {
-		klog.V(4).Infof("Found device %s by serial scan for volume %s", device, volumeID)
+		klog.Infof("Found device %s by serial scan for volume %s", device, volumeID)
 		return device, nil
 	}
 
 	// Try to find NVMe device (AWS)
 	if device, err := m.findNVMeDevice(volumeID); err == nil {
-		klog.V(4).Infof("Found NVMe device %s for volume %s", device, volumeID)
+		klog.Infof("Found NVMe device %s for volume %s", device, volumeID)
 		return device, nil
 	}
 
 	// Try to find cloud provider device (GCP, Azure, etc.)
 	if device, err := m.findCloudProviderDevice(volumeID); err == nil {
-		klog.V(4).Infof("Found cloud provider device %s for volume %s", device, volumeID)
+		klog.Infof("Found cloud provider device %s for volume %s", device, volumeID)
 		return device, nil
 	}
 
-	return "", fmt.Errorf("timeout waiting for device for volume %s", volumeID)
+	return "", fmt.Errorf("timeout waiting for device for volume %s after %v - device never appeared on node", volumeID, maxWait)
 }
 
 // findDeviceBySerial scans all block devices to find one matching the volume ID
@@ -357,6 +427,7 @@ func (m *LinuxMounter) findNVMeDevice(volumeID string) (string, error) {
 	}
 
 	// Find the most recently created device (likely our newly attached volume)
+	// BUT exclude devices that are already in use (mounted or have partitions)
 	var newestDevice string
 	var newestTime time.Time
 
@@ -371,16 +442,35 @@ func (m *LinuxMounter) findNVMeDevice(volumeID string) (string, error) {
 			continue
 		}
 
+		// Resolve symlink to get actual device
+		realPath, err := filepath.EvalSymlinks(match)
+		if err != nil {
+			continue
+		}
+
+		if !m.isBlockDevice(realPath) {
+			continue
+		}
+
+		// CRITICAL: Skip devices that are already in use
+		// Check if device has partitions (indicates it's a system disk)
+		deviceName := filepath.Base(realPath)
+		if m.hasPartitions(deviceName) {
+			klog.V(5).Infof("Skipping NVMe device %s -> %s (has partitions, likely system disk)", match, realPath)
+			continue
+		}
+
+		// Check if device is mounted (indicates it's in use)
+		if m.isMounted(realPath) {
+			klog.V(5).Infof("Skipping NVMe device %s -> %s (already mounted)", match, realPath)
+			continue
+		}
+
 		modTime := info.ModTime()
 		if newestDevice == "" || modTime.After(newestTime) {
-			// Resolve symlink to get actual device
-			if realPath, err := filepath.EvalSymlinks(match); err == nil {
-				if m.isBlockDevice(realPath) {
-					newestDevice = realPath
-					newestTime = modTime
-					klog.V(5).Infof("Found NVMe candidate: %s -> %s (mtime: %v)", match, realPath, modTime)
-				}
-			}
+			newestDevice = realPath
+			newestTime = modTime
+			klog.V(5).Infof("Found NVMe candidate: %s -> %s (mtime: %v)", match, realPath, modTime)
 		}
 	}
 
@@ -422,6 +512,7 @@ func (m *LinuxMounter) findCloudProviderDevice(volumeID string) (string, error) 
 	}
 
 	// Find the most recently created device (likely our newly attached volume)
+	// BUT exclude devices that are already in use (mounted or have partitions)
 	var newestDevice string
 	var newestTime time.Time
 
@@ -436,16 +527,33 @@ func (m *LinuxMounter) findCloudProviderDevice(volumeID string) (string, error) 
 			continue
 		}
 
+		// Resolve symlink to get actual device
+		realPath, err := filepath.EvalSymlinks(match)
+		if err != nil {
+			continue
+		}
+
+		if !m.isBlockDevice(realPath) {
+			continue
+		}
+
+		// CRITICAL: Skip devices that are already in use
+		deviceName := filepath.Base(realPath)
+		if m.hasPartitions(deviceName) {
+			klog.V(5).Infof("Skipping cloud device %s -> %s (has partitions, likely system disk)", match, realPath)
+			continue
+		}
+
+		if m.isMounted(realPath) {
+			klog.V(5).Infof("Skipping cloud device %s -> %s (already mounted)", match, realPath)
+			continue
+		}
+
 		modTime := info.ModTime()
 		if newestDevice == "" || modTime.After(newestTime) {
-			// Resolve symlink to get actual device
-			if realPath, err := filepath.EvalSymlinks(match); err == nil {
-				if m.isBlockDevice(realPath) {
-					newestDevice = realPath
-					newestTime = modTime
-					klog.V(5).Infof("Found cloud device candidate: %s -> %s (mtime: %v)", match, realPath, modTime)
-				}
-			}
+			newestDevice = realPath
+			newestTime = modTime
+			klog.V(5).Infof("Found cloud device candidate: %s -> %s (mtime: %v)", match, realPath, modTime)
 		}
 	}
 
@@ -467,6 +575,30 @@ func (m *LinuxMounter) isBlockDevice(path string) bool {
 	// Check if it's a block device
 	mode := fileInfo.Mode()
 	return mode&os.ModeDevice != 0 && mode&os.ModeCharDevice == 0
+}
+
+// hasPartitions checks if a device has partitions
+func (m *LinuxMounter) hasPartitions(deviceName string) bool {
+	// Check if /sys/block/{device}/*/partition exists
+	// This indicates the device has partitions
+	pattern := fmt.Sprintf("/sys/block/%s/*/partition", deviceName)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return false
+	}
+	return len(matches) > 0
+}
+
+// isMounted checks if a device is currently mounted
+func (m *LinuxMounter) isMounted(devicePath string) bool {
+	// Read /proc/mounts to check if device is mounted
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return false
+	}
+
+	// Check if device path appears in mounts
+	return strings.Contains(string(data), devicePath)
 }
 
 // ResizeFilesystem resizes the filesystem on the device

@@ -1,0 +1,284 @@
+# Default values for emma-csi-driver
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Emma API Configuration
+emma:
+  # Emma API URL
+  apiUrl: "https://api.emma.ms/external"
+  
+  # Emma API credentials (required)
+  # Create a Service Application in Emma Portal with "Manage" access level
+  credentials:
+    # Client ID from Emma Service Application
+    clientId: "1"
+    # Client Secret from Emma Service Application
+    clientSecret: "1"
+    # Alternatively, use an existing secret
+    existingSecret: ""
+    # Keys in the existing secret
+    clientIdKey: "client-id"
+    clientSecretKey: "client-secret"
+  
+  # Default datacenter ID for volume provisioning
+  # Leave empty to use the first available datacenter
+  # Examples: aws-eu-central-1, gcp-europe-west1, azure-westeurope
+  defaultDatacenterId: ""
+
+# Controller configuration
+controller:
+  # Number of replicas (only 1 is supported)
+  replicaCount: 1
+  
+  image:
+    repository: public.ecr.aws/emma-infra/csi-controller
+    tag: 0.0.1
+    pullPolicy: IfNotPresent
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Log level: debug, info, warn, error
+  logLevel: info
+  
+  # Enable JSON logging
+  jsonLogs: false
+  
+  # Metrics server configuration
+  metrics:
+    enabled: true
+    port: 8080
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity
+  affinity: {}
+  
+  # Priority class name
+  priorityClassName: system-cluster-critical
+  
+  # Service account
+  serviceAccount:
+    create: true
+    name: emma-csi-controller-sa
+    annotations: {}
+
+# Node plugin configuration
+node:
+  image:
+    repository: public.ecr.aws/emma-infra/csi-node
+    tag: 0.0.1
+    pullPolicy: IfNotPresent
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Log level: debug, info, warn, error
+  logLevel: info
+  
+  # Enable JSON logging
+  jsonLogs: false
+  
+  # Metrics server configuration
+  metrics:
+    enabled: true
+    port: 8080
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations (allow scheduling on all nodes by default)
+  tolerations:
+    - operator: Exists
+  
+  # Priority class name
+  priorityClassName: system-node-critical
+  
+  # Service account
+  serviceAccount:
+    create: true
+    name: emma-csi-node-sa
+    annotations: {}
+  
+  # Kubelet directory
+  kubeletDir: /var/lib/kubelet
+
+# CSI Driver configuration
+csiDriver:
+  # Driver name
+  name: csi.emma.ms
+  
+  # Attach required
+  attachRequired: true
+  
+  # Pod info on mount
+  podInfoOnMount: false
+  
+  # Storage capacity tracking
+  storageCapacity: false
+  
+  # Volume lifecycle modes
+  volumeLifecycleModes:
+    - Persistent
+
+# Storage Classes
+storageClasses:
+  # Create default storage classes
+  create: true
+  
+  # Default storage class
+  default: emma-ssd
+  
+  # Storage class configurations
+  classes:
+    - name: emma-ssd
+      default: true
+      reclaimPolicy: Delete
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: ssd
+        fsType: ext4
+      # Override datacenter for this storage class
+      # dataCenterId: aws-eu-central-1
+    
+    - name: emma-ssd-plus
+      default: false
+      reclaimPolicy: Delete
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: ssd-plus
+        fsType: ext4
+    
+    - name: emma-hdd
+      default: false
+      reclaimPolicy: Delete
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: hdd
+        fsType: ext4
+    
+    - name: emma-ssd-retain
+      default: false
+      reclaimPolicy: Retain
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: ssd
+        fsType: ext4
+    
+    - name: emma-ssd-xfs
+      default: false
+      reclaimPolicy: Delete
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: ssd
+        fsType: xfs
+
+# CSI Sidecars
+sidecars:
+  # Provisioner
+  provisioner:
+    image:
+      repository: registry.k8s.io/sig-storage/csi-provisioner
+      tag: v4.0.0
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    logLevel: 2
+  
+  # Attacher
+  attacher:
+    image:
+      repository: registry.k8s.io/sig-storage/csi-attacher
+      tag: v4.5.0
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    logLevel: 2
+  
+  # Resizer
+  resizer:
+    image:
+      repository: registry.k8s.io/sig-storage/csi-resizer
+      tag: v1.10.0
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    logLevel: 2
+  
+  # Liveness Probe
+  livenessProbe:
+    image:
+      repository: registry.k8s.io/sig-storage/livenessprobe
+      tag: v2.12.0
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 50m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 32Mi
+  
+  # Node Driver Registrar
+  nodeDriverRegistrar:
+    image:
+      repository: registry.k8s.io/sig-storage/csi-node-driver-registrar
+      tag: v2.10.0
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 50m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 32Mi
+    logLevel: 2
+
+# Image pull secrets
+imagePullSecrets: []
+
+# Namespace to install the chart
+# Leave empty to use the release namespace
+namespaceOverride: ""
+
+# Additional labels to add to all resources
+commonLabels: {}
+
+# Additional annotations to add to all resources
+commonAnnotations: {}

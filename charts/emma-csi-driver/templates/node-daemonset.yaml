@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "emma-csi-driver.fullname" . }}-node
+  namespace: {{ include "emma-csi-driver.namespace" . }}
+  labels:
+    {{- include "emma-csi-driver.node.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: emma-csi-node
+      {{- include "emma-csi-driver.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app: emma-csi-node
+        {{- include "emma-csi-driver.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "emma-csi-driver.node.serviceAccountName" . }}
+      {{- with .Values.node.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      hostNetwork: true
+      containers:
+        - name: emma-csi-node
+          image: "{{ .Values.node.image.repository }}:{{ .Values.node.image.tag }}"
+          imagePullPolicy: {{ .Values.node.image.pullPolicy }}
+          args:
+            - --endpoint=unix:///csi/csi.sock
+            - --node-id=$(NODE_ID)
+            - --log-level={{ .Values.node.logLevel }}
+            {{- if .Values.node.jsonLogs }}
+            - --json-logs=true
+            {{- end }}
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["SYS_ADMIN"]
+            allowPrivilegeEscalation: true
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: pods-mount-dir
+              mountPath: {{ .Values.node.kubeletDir }}/pods
+              mountPropagation: Bidirectional
+            - name: device-dir
+              mountPath: /dev
+          {{- if .Values.node.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.node.metrics.port }}
+              protocol: TCP
+          {{- end }}
+          resources:
+            {{- toYaml .Values.node.resources | nindent 12 }}
+        
+        - name: node-driver-registrar
+          image: "{{ .Values.sidecars.nodeDriverRegistrar.image.repository }}:{{ .Values.sidecars.nodeDriverRegistrar.image.tag }}"
+          imagePullPolicy: {{ .Values.sidecars.nodeDriverRegistrar.image.pullPolicy }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path={{ .Values.node.kubeletDir }}/plugins/{{ .Values.csiDriver.name }}/csi.sock
+            - --v={{ .Values.sidecars.nodeDriverRegistrar.logLevel }}
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+          resources:
+            {{- toYaml .Values.sidecars.nodeDriverRegistrar.resources | nindent 12 }}
+        
+        - name: liveness-probe
+          image: "{{ .Values.sidecars.livenessProbe.image.repository }}:{{ .Values.sidecars.livenessProbe.image.tag }}"
+          imagePullPolicy: {{ .Values.sidecars.livenessProbe.image.pullPolicy }}
+          args:
+            - --csi-address=/csi/csi.sock
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+          resources:
+            {{- toYaml .Values.sidecars.livenessProbe.resources | nindent 12 }}
+      
+      volumes:
+        - name: plugin-dir
+          hostPath:
+            path: {{ .Values.node.kubeletDir }}/plugins/{{ .Values.csiDriver.name }}/
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: {{ .Values.node.kubeletDir }}/plugins_registry/
+            type: Directory
+        - name: pods-mount-dir
+          hostPath:
+            path: {{ .Values.node.kubeletDir }}/pods
+            type: Directory
+        - name: device-dir
+          hostPath:
+            path: /dev
+            type: Directory
+      
+      {{- with .Values.node.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.node.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.node.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -90,19 +90,6 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 	logger := logging.NewLogger("emma-client")
 	logger.Info("Emma API client initialized successfully")
 
-	// Emma tokens have 15 minute lifespan
-	// Use the expiresIn from response, or default to 15 minutes if not provided
-	expiresIn := tokenResp.GetExpiresIn()
-	if expiresIn <= 0 {
-		expiresIn = 900 // 15 minutes default
-		logger.Warn("Token expiresIn not provided or invalid, using default 15 minutes")
-	}
-	tokenExpiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
-	logger.Info("Initial token obtained", map[string]interface{}{
-		"expiresIn": expiresIn,
-		"expiry":    tokenExpiry,
-	})
-
 	return &Client{
 		apiClient:    apiClient,
 		ctx:          ctx,
@@ -110,7 +97,7 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
 		accessToken:  tokenResp.GetAccessToken(),
 		refreshToken: tokenResp.GetRefreshToken(),
-		tokenExpiry:  tokenExpiry,
+		tokenExpiry:  time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second),
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		logger:       logger,
@@ -120,9 +107,9 @@ func NewClient(baseURL, clientID, clientSecret string) (*Client, error) {
 // getAccessToken returns a valid access token, refreshing if necessary
 func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	c.tokenMutex.RLock()
-	// Check if we have a valid token (with 2 minute buffer for 15min tokens)
-	// This gives us time to refresh before expiry while not refreshing too often
-	if c.accessToken != "" && time.Now().Add(2*time.Minute).Before(c.tokenExpiry) {
+	// Check if we have a valid token (with 5 minute buffer)
+	// Token is valid if current time is before (expiry - 5 minutes)
+	if c.accessToken != "" && time.Now().Before(c.tokenExpiry.Add(-5*time.Minute)) {
 		token := c.accessToken
 		c.tokenMutex.RUnlock()
 		return token, nil
@@ -134,12 +121,11 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	defer c.tokenMutex.Unlock()
 
 	// Double-check after acquiring write lock
-	if c.accessToken != "" && time.Now().Add(2*time.Minute).Before(c.tokenExpiry) {
+	if c.accessToken != "" && time.Now().Before(c.tokenExpiry.Add(-5*time.Minute)) {
 		return c.accessToken, nil
 	}
 
-	oldExpiry := c.tokenExpiry
-	klog.V(4).Infof("Access token expired or expiring soon (expiry: %v), refreshing...", oldExpiry)
+	klog.Infof("Access token expired or expiring soon (expiry: %v), refreshing...", c.tokenExpiry)
 
 	// Try refresh token first
 	if c.refreshToken != "" {
@@ -148,43 +134,31 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 		if err == nil {
 			c.accessToken = tokenResp.GetAccessToken()
 			c.refreshToken = tokenResp.GetRefreshToken()
-
-			// Emma tokens have 15 minute lifespan
-			// Use the expiresIn from response, or default to 15 minutes if not provided
-			expiresIn := tokenResp.GetExpiresIn()
-			if expiresIn <= 0 {
-				expiresIn = 900 // 15 minutes default
-			}
-			c.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
+			c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second)
 			c.ctx = context.WithValue(context.Background(), emma.ContextAccessToken, c.accessToken)
-
-			klog.V(4).Infof("Access token refreshed successfully (new expiry: %v)", c.tokenExpiry)
+			klog.Infof("Access token refreshed successfully (new expiry: %v)", c.tokenExpiry)
 			c.logger.Info("Access token refreshed successfully")
 			return c.accessToken, nil
 		}
-		klog.V(4).Infof("Failed to refresh token, will re-authenticate: %v", err)
+		klog.Warningf("Failed to refresh token, will re-authenticate: %v", err)
+		c.logger.Warn("Token refresh failed, re-authenticating", map[string]interface{}{"error": err.Error()})
 	}
 
 	// If refresh fails, re-authenticate with credentials
-	klog.V(4).Info("Re-authenticating with credentials")
+	klog.Info("Re-authenticating with credentials")
+	c.logger.Info("Re-authenticating with Emma API")
 	credentials := emma.NewCredentials(c.clientID, c.clientSecret)
 	tokenResp, _, err := c.apiClient.AuthenticationAPI.IssueToken(context.Background()).Credentials(*credentials).Execute()
 	if err != nil {
+		c.logger.Error("Re-authentication failed", err)
 		return "", fmt.Errorf("failed to issue new token: %w", err)
 	}
 
 	c.accessToken = tokenResp.GetAccessToken()
 	c.refreshToken = tokenResp.GetRefreshToken()
-
-	// Emma tokens have 15 minute lifespan
-	expiresIn := tokenResp.GetExpiresIn()
-	if expiresIn <= 0 {
-		expiresIn = 900 // 15 minutes default
-	}
-	c.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
+	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.GetExpiresIn()) * time.Second)
 	c.ctx = context.WithValue(context.Background(), emma.ContextAccessToken, c.accessToken)
-
-	klog.V(4).Infof("Re-authenticated successfully (new expiry: %v)", c.tokenExpiry)
+	klog.Infof("Re-authenticated successfully (new expiry: %v)", c.tokenExpiry)
 	c.logger.Info("Re-authenticated successfully")
 
 	return c.accessToken, nil
@@ -270,7 +244,7 @@ func (c *Client) CreateVolume(ctx context.Context, name string, sizeGB int32, vo
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -295,7 +269,7 @@ func (c *Client) GetVolume(ctx context.Context, volumeID int32) (*VolumeResponse
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("volume %d not found", volumeID)
@@ -322,7 +296,7 @@ func (c *Client) ListVolumes(ctx context.Context) ([]*VolumeResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -347,7 +321,7 @@ func (c *Client) DeleteVolume(ctx context.Context, volumeID int32) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
 		klog.V(4).Infof("Volume %d not found, considering it already deleted", volumeID)
@@ -377,7 +351,7 @@ func (c *Client) ResizeVolume(ctx context.Context, volumeID int32, newSizeGB int
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
@@ -392,18 +366,6 @@ func (c *Client) ResizeVolume(ctx context.Context, volumeID int32, newSizeGB int
 func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) error {
 	klog.V(4).Infof("Attaching volume %d to VM %d", volumeID, vmID)
 
-	// Check VM state before attempting attach
-	vm, err := c.GetVM(ctx, vmID)
-	if err != nil {
-		klog.V(4).Infof("Could not get VM state (will try attach anyway): %v", err)
-	} else if vm.Status != nil {
-		klog.V(4).Infof("VM %d current state: %s", vmID, *vm.Status)
-		// Log warning if VM is in a known problematic state
-		if *vm.Status != "ACTIVE" && *vm.Status != "RUNNING" {
-			klog.Warningf("VM %d is in state '%s', attach may fail or take longer", vmID, *vm.Status)
-		}
-	}
-
 	path := fmt.Sprintf("/v1/vms/%d/actions", vmID)
 	req := &VMActionRequest{
 		Action:   "attach",
@@ -412,10 +374,10 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 
 	// Optimized retry logic for VM state conflicts
 	// Emma VMs can be in transitional states during startup/operations
-	// Azure VMs may take longer to reach ready state
-	maxRetries := 20 // Increased from 12 for Azure
+	// Use shorter initial delays with faster ramp-up
+	maxRetries := 12
 	initialDelay := 1 * time.Second
-	maxDelay := 20 * time.Second // Increased from 15s
+	maxDelay := 15 * time.Second
 
 	startTime := time.Now()
 
@@ -432,7 +394,7 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 		}
 
 		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
 			elapsed := time.Since(startTime)
@@ -444,16 +406,8 @@ func (c *Client) AttachVolume(ctx context.Context, vmID int32, volumeID int32) e
 		// Handle 409 CONFLICT - VM in transitional state
 		if resp.StatusCode == http.StatusConflict {
 			if attempt < maxRetries {
-				// Check VM state every 5 attempts to provide better diagnostics
-				if attempt > 0 && attempt%5 == 0 {
-					if vm, err := c.GetVM(ctx, vmID); err == nil && vm.Status != nil {
-						klog.Warningf("VM %d still in state '%s' after %d attempts (elapsed: %v)",
-							vmID, *vm.Status, attempt+1, time.Since(startTime))
-					}
-				}
-
 				// Optimized backoff: start fast, ramp up gradually
-				// 1s, 2s, 3s, 5s, 8s, 12s, 20s, 20s...
+				// 1s, 2s, 3s, 5s, 8s, 12s, 15s, 15s...
 				var delay time.Duration
 				if attempt < 3 {
 					delay = initialDelay * time.Duration(attempt+1)
@@ -524,7 +478,7 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 		}
 
 		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
 			elapsed := time.Since(startTime)
@@ -581,9 +535,9 @@ func (c *Client) DetachVolume(ctx context.Context, vmID int32, volumeID int32) e
 func (c *Client) GetVM(ctx context.Context, vmID int32) (*emma.Vm, error) {
 	klog.V(5).Infof("Getting VM: %d", vmID)
 
-	// Check if apiClient is available (may be nil in tests)
-	if c.apiClient == nil {
-		return nil, fmt.Errorf("API client not initialized")
+	// Ensure we have a valid token
+	if _, err := c.getAccessToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
 	}
 
 	vm, _, err := c.apiClient.VirtualMachinesAPI.GetVm(c.ctx, vmID).Execute()
@@ -598,6 +552,11 @@ func (c *Client) GetVM(ctx context.Context, vmID int32) (*emma.Vm, error) {
 func (c *Client) ListVMs(ctx context.Context) ([]emma.Vm, error) {
 	klog.V(5).Info("Listing VMs")
 
+	// Ensure we have a valid token
+	if _, err := c.getAccessToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
+	}
+
 	vms, _, err := c.apiClient.VirtualMachinesAPI.GetVms(c.ctx).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list VMs: %w", err)
@@ -610,6 +569,11 @@ func (c *Client) ListVMs(ctx context.Context) ([]emma.Vm, error) {
 // ListKubernetesClusters lists all Kubernetes clusters
 func (c *Client) ListKubernetesClusters(ctx context.Context) ([]emma.Kubernetes, error) {
 	klog.V(5).Info("Listing Kubernetes clusters")
+
+	// Ensure we have a valid token
+	if _, err := c.getAccessToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
+	}
 
 	clusters, _, err := c.apiClient.KubernetesClustersAPI.GetKubernetesClusters(c.ctx).Execute()
 	if err != nil {
@@ -624,6 +588,11 @@ func (c *Client) ListKubernetesClusters(ctx context.Context) ([]emma.Kubernetes,
 func (c *Client) GetKubernetesCluster(ctx context.Context, clusterID int32) (*emma.Kubernetes, error) {
 	klog.V(5).Infof("Getting Kubernetes cluster: %d", clusterID)
 
+	// Ensure we have a valid token
+	if _, err := c.getAccessToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
+	}
+
 	cluster, _, err := c.apiClient.KubernetesClustersAPI.GetKubernetesCluster(c.ctx, clusterID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Kubernetes cluster: %w", err)
@@ -635,6 +604,11 @@ func (c *Client) GetKubernetesCluster(ctx context.Context, clusterID int32) (*em
 // GetDataCenters retrieves all available data centers
 func (c *Client) GetDataCenters(ctx context.Context) ([]emma.DataCenter, error) {
 	klog.V(5).Info("Getting data centers")
+
+	// Ensure we have a valid token
+	if _, err := c.getAccessToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
+	}
 
 	dataCenters, _, err := c.apiClient.DataCentersAPI.GetDataCenters(c.ctx).Execute()
 	if err != nil {
@@ -649,6 +623,11 @@ func (c *Client) GetDataCenters(ctx context.Context) ([]emma.DataCenter, error) 
 func (c *Client) GetDataCenter(ctx context.Context, dataCenterID string) (*emma.DataCenter, error) {
 	klog.V(5).Infof("Getting data center: %s", dataCenterID)
 
+	// Ensure we have a valid token
+	if _, err := c.getAccessToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
+	}
+
 	dc, _, err := c.apiClient.DataCentersAPI.GetDataCenter(c.ctx, dataCenterID).Execute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get data center: %w", err)
@@ -660,6 +639,11 @@ func (c *Client) GetDataCenter(ctx context.Context, dataCenterID string) (*emma.
 // GetVolumeConfigs retrieves available volume configurations
 func (c *Client) GetVolumeConfigs(ctx context.Context) ([]emma.VolumeConfiguration, error) {
 	klog.V(5).Info("Getting volume configs")
+
+	// Ensure we have a valid token
+	if _, err := c.getAccessToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
+	}
 
 	_, _, err := c.apiClient.VolumesConfigurationsAPI.GetSystemVolumeConfigs(c.ctx).Execute()
 	if err != nil {

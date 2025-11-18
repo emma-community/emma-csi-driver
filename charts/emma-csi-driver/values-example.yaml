@@ -1,0 +1,97 @@
+# Production values for emma-csi-driver
+# Override default values for production deployment
+
+emma:
+  # Use existing secret in production
+  credentials:
+    existingSecret: "emma-api-credentials"
+  
+  # Specify datacenter
+  defaultDatacenterId: "aws-eu-central-1"
+
+controller:
+  # Production resource limits
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  
+  # Info level logging for production
+  logLevel: info
+  jsonLogs: true
+  
+  # Enable metrics
+  metrics:
+    enabled: true
+  
+  # High priority
+  priorityClassName: system-cluster-critical
+
+node:
+  # Production resource limits
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 150m
+      memory: 192Mi
+  
+  # Info level logging
+  logLevel: info
+  jsonLogs: true
+  
+  # Enable metrics
+  metrics:
+    enabled: true
+  
+  # High priority
+  priorityClassName: system-node-critical
+  
+  # Tolerate all taints
+  tolerations:
+    - operator: Exists
+
+# Create production storage classes
+storageClasses:
+  create: true
+  default: emma-ssd
+  classes:
+    - name: emma-ssd
+      default: true
+      reclaimPolicy: Delete
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: ssd
+        fsType: ext4
+    
+    - name: emma-ssd-plus
+      default: false
+      reclaimPolicy: Delete
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: ssd-plus
+        fsType: ext4
+    
+    - name: emma-hdd
+      default: false
+      reclaimPolicy: Delete
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: hdd
+        fsType: ext4
+    
+    - name: emma-ssd-retain
+      default: false
+      reclaimPolicy: Retain
+      volumeBindingMode: WaitForFirstConsumer
+      allowVolumeExpansion: true
+      parameters:
+        type: ssd
+        fsType: ext4

@@ -149,6 +149,10 @@ func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 		Info("Creating volume via Emma API")
 
 	// Create volume via Emma API
+	startTime := time.Now()
+	klog.Infof("Calling Emma API to create volume: name=%s, size=%dGB, type=%s, datacenter=%s",
+		req.GetName(), sizeGB, volumeType, dataCenterID)
+
 	volume, err := s.emmaClient.CreateVolume(ctx, req.GetName(), sizeGB, volumeType, dataCenterID)
 	if err != nil {
 		timer.ObserveError()
@@ -156,9 +160,12 @@ func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 		return nil, status.Errorf(codes.Internal, "failed to create volume: %v", err)
 	}
 
+	createDuration := time.Since(startTime)
+	klog.Infof("Emma API returned volume ID %d (took %v), waiting for AVAILABLE status", volume.ID, createDuration)
 	opLog.WithVolumeID(strconv.Itoa(int(volume.ID))).Info("Volume created, waiting for AVAILABLE status")
 
 	// Wait for volume to become AVAILABLE
+	waitStart := time.Now()
 	if err := s.emmaClient.WaitForVolumeStatus(ctx, volume.ID, "AVAILABLE", volumeCreateTimeout); err != nil {
 		// Try to clean up the volume
 		_ = s.emmaClient.DeleteVolume(ctx, volume.ID)
@@ -166,6 +173,10 @@ func (s *ControllerService) CreateVolume(ctx context.Context, req *csi.CreateVol
 		opLog.WithVolumeID(strconv.Itoa(int(volume.ID))).Error("Volume creation timeout", err)
 		return nil, status.Errorf(codes.Internal, "volume creation timeout: %v", err)
 	}
+
+	waitDuration := time.Since(waitStart)
+	totalDuration := time.Since(startTime)
+	klog.Infof("Volume %d is AVAILABLE (wait: %v, total: %v)", volume.ID, waitDuration, totalDuration)
 
 	timer.ObserveSuccess()
 	opLog.WithVolumeID(strconv.Itoa(int(volume.ID))).Complete("Volume created successfully")

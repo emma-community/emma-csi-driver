@@ -1,0 +1,236 @@
+version: '3'
+
+vars:
+  REGISTRY: '{{.REGISTRY | default "public.ecr.aws"}}'
+  NAMESPACE: '{{.NAMESPACE | default "emma-infra"}}'
+  VERSION: '{{.VERSION | default "0.0.1"}}'
+  CONTROLLER_IMAGE: '{{.REGISTRY}}/{{.NAMESPACE}}/csi-controller:{{.VERSION}}'
+  NODE_IMAGE: '{{.REGISTRY}}/{{.NAMESPACE}}/csi-node:{{.VERSION}}'
+  PLATFORM: 'linux/amd64'
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
+  BUILD_DATE:
+    sh: date -u +"%Y-%m-%dT%H:%M:%SZ"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # Linting
+  lint:
+    desc: Run all linting checks
+    cmds:
+      - task: lint:fmt
+      - task: lint:vet
+      - task: lint:golangci
+
+  lint:fmt:
+    desc: Check Go code formatting
+    cmds:
+      - echo "Checking code formatting..."
+      - gofmt -l . | grep . && echo "Code not formatted" && exit 1 || echo "OK"
+
+  lint:vet:
+    desc: Run go vet
+    cmds:
+      - echo "Running go vet..."
+      - go vet ./...
+      - echo "OK"
+
+  lint:golangci:
+    desc: Run golangci-lint
+    cmds:
+      - echo "Running golangci-lint..."
+      - command -v golangci-lint >/dev/null && golangci-lint run ./... || echo "golangci-lint not installed"
+
+  # Formatting
+  fmt:
+    desc: Format Go code
+    cmds:
+      - echo "Formatting code..."
+      - go fmt ./...
+      - echo "OK"
+
+  # Testing
+  test:
+    desc: Run all tests
+    cmds:
+      - task: test:unit
+      - task: test:coverage
+
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - echo "Running unit tests..."
+      - go test -v -race ./...
+
+  test:coverage:
+    desc: Run tests with coverage
+    cmds:
+      - echo "Running tests with coverage..."
+      - go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      - go tool cover -func=coverage.out
+
+  test:coverage:html:
+    desc: Generate HTML coverage report
+    deps: [test:coverage]
+    cmds:
+      - go tool cover -html=coverage.out -o coverage.html
+      - echo "Coverage report generated"
+
+  # Dependencies
+  deps:
+    desc: Download and tidy dependencies
+    cmds:
+      - echo "Downloading dependencies..."
+      - go mod download
+      - go mod tidy
+
+  deps:verify:
+    desc: Verify dependencies
+    cmds:
+      - go mod verify
+
+  # Build
+  build:
+    desc: Build both binaries
+    cmds:
+      - task: build:controller
+      - task: build:node
+
+  build:controller:
+    desc: Build controller binary
+    cmds:
+      - echo "Building controller..."
+      - mkdir -p bin
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.buildDate={{.BUILD_DATE}} -w -s" -o bin/emma-csi-controller ./cmd/controller
+      - echo "Built bin/emma-csi-controller"
+
+  build:node:
+    desc: Build node binary
+    cmds:
+      - echo "Building node..."
+      - mkdir -p bin
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.buildDate={{.BUILD_DATE}} -w -s" -o bin/emma-csi-node ./cmd/node
+      - echo "Built bin/emma-csi-node"
+
+  # Docker
+  docker:build:
+    desc: Build Docker images
+    cmds:
+      - task: docker:build:controller
+      - task: docker:build:node
+
+  docker:build:controller:
+    desc: Build controller Docker image
+    cmds:
+      - echo "Building controller image..."
+      - docker buildx build --platform {{.PLATFORM}} --target controller --build-arg VERSION={{.VERSION}} --build-arg COMMIT={{.COMMIT}} --build-arg BUILD_DATE={{.BUILD_DATE}} --load -t {{.CONTROLLER_IMAGE}} -f Dockerfile .
+      - echo "Built {{.CONTROLLER_IMAGE}}"
+
+  docker:build:node:
+    desc: Build node Docker image
+    cmds:
+      - echo "Building node image..."
+      - docker buildx build --platform {{.PLATFORM}} --target node --build-arg VERSION={{.VERSION}} --build-arg COMMIT={{.COMMIT}} --build-arg BUILD_DATE={{.BUILD_DATE}} --load -t {{.NODE_IMAGE}} -f Dockerfile .
+      - echo "Built {{.NODE_IMAGE}}"
+
+  docker:push:
+    desc: Push Docker images
+    deps: [docker:build]
+    cmds:
+      - task: docker:push:controller
+      - task: docker:push:node
+
+  docker:push:controller:
+    desc: Push controller image
+    cmds:
+      - echo "Pushing {{.CONTROLLER_IMAGE}}..."
+      - docker push {{.CONTROLLER_IMAGE}}
+
+  docker:push:node:
+    desc: Push node image
+    cmds:
+      - echo "Pushing {{.NODE_IMAGE}}..."
+      - docker push {{.NODE_IMAGE}}
+
+  # Combined
+  ci:
+    desc: Run CI pipeline
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  release:
+    desc: Build and push release
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+      - task: docker:build
+      - task: docker:push
+      - echo "Release complete"
+
+  # Cleanup
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf bin/
+      - rm -f coverage.out coverage.html
+      - echo "Cleaned"
+
+  clean:all:
+    desc: Clean everything
+    deps: [clean]
+    cmds:
+      - docker rmi {{.CONTROLLER_IMAGE}} 2>/dev/null || true
+      - docker rmi {{.NODE_IMAGE}} 2>/dev/null || true
+
+  # Helm
+  helm:lint:
+    desc: Lint Helm chart
+    cmds:
+      - helm lint charts/emma-csi-driver
+
+  helm:template:
+    desc: Template Helm chart
+    cmds:
+      - helm template emma-csi-driver charts/emma-csi-driver --namespace kube-system
+
+  helm:install:
+    desc: Install Helm chart
+    cmds:
+      - helm install emma-csi-driver charts/emma-csi-driver --namespace kube-system
+
+  helm:upgrade:
+    desc: Upgrade Helm chart
+    cmds:
+      - helm upgrade emma-csi-driver charts/emma-csi-driver --namespace kube-system
+
+  helm:uninstall:
+    desc: Uninstall Helm chart
+    cmds:
+      - helm uninstall emma-csi-driver --namespace kube-system
+
+  helm:package:
+    desc: Package Helm chart
+    cmds:
+      - helm package charts/emma-csi-driver -d dist/
+
+  # Info
+  info:
+    desc: Show build information
+    cmds:
+      - echo "Emma CSI Driver"
+      - echo "Version {{.VERSION}}"
+      - echo "Commit {{.COMMIT}}"
+      - echo "Controller {{.CONTROLLER_IMAGE}}"
+      - echo "Node {{.NODE_IMAGE}}"
+
+  version:
+    desc: Show version
+    cmds:
+      - echo "Emma CSI Driver {{.VERSION}}"

@@ -28,15 +28,17 @@ func NewNodeService(driver *Driver) *NodeService {
 
 // NodeStageVolume stages a volume
 func (s *NodeService) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	klog.V(4).Infof("NodeStageVolume called with request: %+v", req)
+	volumeID := req.GetVolumeId()
+	stagingTargetPath := req.GetStagingTargetPath()
+
+	klog.Infof("NodeStageVolume: Starting staging for volume %s to %s", volumeID, stagingTargetPath)
+	klog.V(4).Infof("NodeStageVolume called with full request: %+v", req)
 
 	// Validate request
-	volumeID := req.GetVolumeId()
 	if volumeID == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
 	}
 
-	stagingTargetPath := req.GetStagingTargetPath()
 	if stagingTargetPath == "" {
 		return nil, status.Error(codes.InvalidArgument, "staging target path is required")
 	}
@@ -71,12 +73,14 @@ func (s *NodeService) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 	}
 
 	// Discover the device path for the volume
+	klog.Infof("NodeStageVolume: Discovering device path for volume %s", volumeID)
 	devicePath, err := s.mounter.GetDevicePath(volumeID)
 	if err != nil {
+		klog.Errorf("NodeStageVolume: Failed to find device for volume %s: %v", volumeID, err)
 		return nil, status.Errorf(codes.Internal, "failed to find device for volume %s: %v", volumeID, err)
 	}
 
-	klog.V(4).Infof("Found device %s for volume %s", devicePath, volumeID)
+	klog.Infof("NodeStageVolume: Found device %s for volume %s", devicePath, volumeID)
 
 	// Get mount options
 	mountOptions := []string{}

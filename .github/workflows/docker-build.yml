@@ -1,0 +1,56 @@
+name: Docker Build
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'cmd/**'
+      - 'pkg/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+
+jobs:
+  docker-build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build controller image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          target: controller
+          push: false
+          tags: emma-csi-controller:test
+          build-args: |
+            VERSION=test
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build node image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          target: node
+          push: false
+          tags: emma-csi-node:test
+          build-args: |
+            VERSION=test
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

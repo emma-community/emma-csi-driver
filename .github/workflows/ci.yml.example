@@ -1,0 +1,170 @@
+# Emma CSI Driver - CI/CD Pipeline
+# Rename this file to ci.yml to enable
+
+name: CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: docker.io
+  NAMESPACE: arsenh1995/ghaghaqoqoqo123
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: Run linting
+        run: task lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: Run tests
+        run: task test:coverage
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Install Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: Build binaries
+        run: task build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: binaries
+          path: bin/
+
+  docker:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    needs: [lint, test, build]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Install Task
+        uses: arduino/setup-task@v1
+        with:
+          version: 3.x
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=dev-${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Docker images
+        run: VERSION=${{ steps.version.outputs.VERSION }} task docker:build
+
+      - name: Push Docker images
+        run: VERSION=${{ steps.version.outputs.VERSION }} task docker:push
+
+      - name: Image digest
+        run: |
+          echo "Controller: ${{ env.REGISTRY }}/${{ env.NAMESPACE }}:csi-controller"
+          echo "Node: ${{ env.REGISTRY }}/${{ env.NAMESPACE }}:csi-node"
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+          body: |
+            ## Emma CSI Driver ${{ github.ref }}
+            
+            ### Docker Images
+            - Controller: `${{ env.REGISTRY }}/${{ env.NAMESPACE }}:csi-controller`
+            - Node: `${{ env.REGISTRY }}/${{ env.NAMESPACE }}:csi-node`
+            
+            ### Installation
+            ```bash
+            kubectl set image statefulset/emma-csi-controller -n kube-system \
+              emma-csi-controller=${{ env.REGISTRY }}/${{ env.NAMESPACE }}:csi-controller
+            
+            kubectl set image daemonset/emma-csi-node -n kube-system \
+              emma-csi-node=${{ env.REGISTRY }}/${{ env.NAMESPACE }}:csi-node
+            ```
+            
+            ### Changes
+            See [CHANGELOG.md](CHANGELOG.md) for details.
