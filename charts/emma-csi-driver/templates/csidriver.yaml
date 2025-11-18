@@ -1,0 +1,18 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: {{ .Values.csiDriver.name }}
+  labels:
+    {{- include "emma-csi-driver.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  attachRequired: {{ .Values.csiDriver.attachRequired }}
+  podInfoOnMount: {{ .Values.csiDriver.podInfoOnMount }}
+  {{- if .Values.csiDriver.storageCapacity }}
+  storageCapacity: {{ .Values.csiDriver.storageCapacity }}
+  {{- end }}
+  volumeLifecycleModes:
+    {{- toYaml .Values.csiDriver.volumeLifecycleModes | nindent 4 }}

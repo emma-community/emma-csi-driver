@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  IMAGE_REGISTRY: docker.io
+  IMAGE_NAMESPACE: emma
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
+      - name: Get commit SHA
+        id: commit
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "Commit: ${COMMIT}"
+
+      - name: Get build date
+        id: date
+        run: |
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "build_date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+          echo "Build Date: ${BUILD_DATE}"
+
+      - name: Build and push controller image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          target: controller
+          push: true
+          tags: |
+            ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/emma-csi-controller:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/emma-csi-controller:latest
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            COMMIT=${{ steps.commit.outputs.commit }}
+            BUILD_DATE=${{ steps.date.outputs.build_date }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push node image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          target: node
+          push: true
+          tags: |
+            ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/emma-csi-node:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/emma-csi-node:latest
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            COMMIT=${{ steps.commit.outputs.commit }}
+            BUILD_DATE=${{ steps.date.outputs.build_date }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release_notes.md << EOF
+          ## Emma CSI Driver ${{ steps.version.outputs.version }}
+          
+          ### Docker Images
+          
+          - Controller: \`${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/emma-csi-controller:${{ steps.version.outputs.version }}\`
+          - Node: \`${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/emma-csi-node:${{ steps.version.outputs.version }}\`
+          
+          ### Installation
+          
+          \`\`\`bash
+          # Update the image tags in deploy/ manifests to use version ${{ steps.version.outputs.version }}
+          kubectl apply -k deploy/
+          \`\`\`
+          
+          ### Changes
+          
+          See the commit history for detailed changes.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
