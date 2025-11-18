@@ -9,6 +9,7 @@ run:
     - .git
 
 linters:
+  disable-all: true
   enable:
     - errcheck
     - govet
@@ -20,8 +21,6 @@ linters:
     - revive
     - gosec
     - unparam
-  disable:
-    - typecheck
 
 linters-settings:
   errcheck:
