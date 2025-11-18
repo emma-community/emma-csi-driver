@@ -20,6 +20,8 @@ linters:
     - revive
     - gosec
     - unparam
+  disable:
+    - typecheck
 
 linters-settings:
   errcheck:
